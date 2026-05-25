@@ -1236,14 +1236,6 @@ func RunExport(opts ExportOptions) {
 				continue
 			}
 
-			// Skip clips shorter than MinDuration
-			clipDurS := getFloat(getMapDef(seg, "source_timerange"), "duration", 0) / 1_000_000
-			if clipDurS < opts.MinDuration {
-				opts.log("%s", label)
-				opts.log("    [!] Too short (%.2fs < %.1fs), skipping", clipDurS, opts.MinDuration)
-				continue
-			}
-
 			if getString(mat, "path", "") == "" && getString(mat, "material_name", "") != "" {
 				innerSegs := resolveCompoundSegments(seg, mat, opts.ProjectDir, 0)
 				if len(innerSegs) == 0 {
@@ -1252,6 +1244,18 @@ func RunExport(opts ExportOptions) {
 					continue
 				}
 				innerSegs = mergeAdjacentInnerSegs(innerSegs, 2000)
+
+				// Compute total output duration for compound clip
+				var totalDurS float64
+				for _, is := range innerSegs {
+					totalDurS += getFloat(getMapDef(is.Seg, "source_timerange"), "duration", 0) / 1_000_000
+				}
+				if totalDurS < opts.MinDuration {
+					opts.log("%s", label)
+					opts.log("    [!] Too short (%.2fs < %.1fs), skipping", totalDurS, opts.MinDuration)
+					continue
+				}
+
 				if len(innerSegs) == 1 {
 					jobs = append(jobs, Job{Label: label, OutputPath: outPath, Kind: "simple",
 						Segment: innerSegs[0].Seg, Material: innerSegs[0].Mat})
@@ -1260,6 +1264,13 @@ func RunExport(opts ExportOptions) {
 						InnerSegs: innerSegs})
 				}
 			} else {
+				// Simple segment — check duration directly
+				clipDurS := getFloat(getMapDef(seg, "source_timerange"), "duration", 0) / 1_000_000
+				if clipDurS < opts.MinDuration {
+					opts.log("%s", label)
+					opts.log("    [!] Too short (%.2fs < %.1fs), skipping", clipDurS, opts.MinDuration)
+					continue
+				}
 				jobs = append(jobs, Job{Label: label, OutputPath: outPath, Kind: "simple",
 					Segment: seg, Material: mat})
 			}
