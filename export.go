@@ -1001,17 +1001,18 @@ func runFFmpegProgress(cmd []string, durS float64, onProgress func(float64)) (st
 // ---------------------------------------------------------------------------
 
 type ExportOptions struct {
-	ProjectDir   string `json:"project_dir"`
-	OutputDir    string `json:"output_dir"`
-	Track        string `json:"track"`
-	Width        int    `json:"width"`
-	Height       int    `json:"height"`
-	FPS          int    `json:"fps"`
-	Workers      int    `json:"workers"`
-	UseGPU       bool   `json:"use_gpu"`
-	DryRun       bool   `json:"dry_run"`
-	FFmpegPath   string `json:"ffmpeg_path"`
-	FFprobePath  string `json:"ffprobe_path"`
+	ProjectDir   string  `json:"project_dir"`
+	OutputDir    string  `json:"output_dir"`
+	Track        string  `json:"track"`
+	Width        int     `json:"width"`
+	Height       int     `json:"height"`
+	FPS          int     `json:"fps"`
+	Workers      int     `json:"workers"`
+	MinDuration  float64 `json:"min_duration"` // seconds; clips shorter than this are skipped (default 2.0)
+	UseGPU       bool    `json:"use_gpu"`
+	DryRun       bool    `json:"dry_run"`
+	FFmpegPath   string  `json:"ffmpeg_path"`
+	FFprobePath  string  `json:"ffprobe_path"`
 	Log          func(string)                                                         `json:"-"`
 	// WorkerUpdate reports per-worker state: id (1-based), clip label (folder/file),
 	// jobNum (e.g. "3/12"), progress [0,1], encoder ("GPU"/"CPU"), idle flag.
@@ -1052,6 +1053,11 @@ type Job struct {
 }
 
 func RunExport(opts ExportOptions) {
+	// Default minimum duration: 2 seconds
+	if opts.MinDuration <= 0 {
+		opts.MinDuration = 2.0
+	}
+
 	// Set binary paths for this run
 	ffmpegBin = opts.ffmpeg()
 	ffprobeBin = opts.ffprobe()
@@ -1238,6 +1244,18 @@ func RunExport(opts ExportOptions) {
 					continue
 				}
 				innerSegs = mergeAdjacentInnerSegs(innerSegs, 2000)
+
+				// Compute total output duration for compound clip
+				var totalDurS float64
+				for _, is := range innerSegs {
+					totalDurS += getFloat(getMapDef(is.Seg, "source_timerange"), "duration", 0) / 1_000_000
+				}
+				if totalDurS < opts.MinDuration {
+					opts.log("%s", label)
+					opts.log("    [!] Too short (%.2fs < %.1fs), skipping", totalDurS, opts.MinDuration)
+					continue
+				}
+
 				if len(innerSegs) == 1 {
 					jobs = append(jobs, Job{Label: label, OutputPath: outPath, Kind: "simple",
 						Segment: innerSegs[0].Seg, Material: innerSegs[0].Mat})
@@ -1246,6 +1264,13 @@ func RunExport(opts ExportOptions) {
 						InnerSegs: innerSegs})
 				}
 			} else {
+				// Simple segment — check duration directly
+				clipDurS := getFloat(getMapDef(seg, "source_timerange"), "duration", 0) / 1_000_000
+				if clipDurS < opts.MinDuration {
+					opts.log("%s", label)
+					opts.log("    [!] Too short (%.2fs < %.1fs), skipping", clipDurS, opts.MinDuration)
+					continue
+				}
 				jobs = append(jobs, Job{Label: label, OutputPath: outPath, Kind: "simple",
 					Segment: seg, Material: mat})
 			}
